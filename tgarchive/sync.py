@@ -1,3 +1,4 @@
+import datetime
 from io import BytesIO
 from sys import exit
 import json
@@ -7,6 +8,8 @@ import tempfile
 import shutil
 import time
 from typing import Optional
+from telethon import utils
+from pathlib import Path
 
 from PIL import Image
 from telethon import TelegramClient, errors, sync
@@ -306,6 +309,20 @@ class Sync:
             thumb=None
         )
 
+    @staticmethod
+    def get_media_type(media: telethon.tl.types.TypeMessageMedia) -> str:
+        if isinstance(media, telethon.tl.types.MessageMediaPhoto):
+            return "photo"
+
+        if utils.is_video(media):
+            return "video"
+
+        if utils.is_audio(media):
+            return "audio"
+
+        return "document"
+
+
     def _get_media(self, msg):
         if isinstance(msg.media, telethon.tl.types.MessageMediaWebPage) and \
                 not isinstance(msg.media.webpage, telethon.tl.types.WebPageEmpty):
@@ -355,17 +372,25 @@ class Sync:
         fpath = self.client.download_media(msg, file=tempfile.gettempdir())
         basename = os.path.basename(fpath)
 
-        newname = "{}.{}".format(msg.id, self._get_file_ext(basename))
-        shutil.move(fpath, os.path.join(self.config["media_dir"], newname))
+        def _date_fmt(date: datetime.datetime):
+            return date.strftime("%Y%m%d-%H%M%S")
+
+        def _date_folders(date: datetime.datetime):
+            return date.strftime("%Y%M")
+
+        def _get_filename(msg):
+            return f"{self.config['media_dir']}/"\
+                   f"{_date_folders(msg.date)}/"\
+                   f"{_date_fmt(msg.date)}-{msg.id}"
+
+        newname = _get_filename(msg)
+        print("new name", newname)
+        self.client.download_media(msg, file=newname)
 
         # If it's a photo, download the thumbnail.
         tname = None
         if isinstance(msg.media, telethon.tl.types.MessageMediaPhoto):
-            tpath = self.client.download_media(
-                msg, file=tempfile.gettempdir(), thumb=1)
-            tname = "thumb_{}.{}".format(
-                msg.id, self._get_file_ext(os.path.basename(tpath)))
-            shutil.move(tpath, os.path.join(self.config["media_dir"], tname))
+            self.client.download_media(msg, file=f"thumb_{newname}", thumb=1)
 
         return basename, newname, tname
 
