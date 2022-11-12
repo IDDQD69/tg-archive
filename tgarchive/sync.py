@@ -67,8 +67,10 @@ class Sync:
         group_id = self._get_group_id(self.config["group"])
 
         if migrated_from_id := self._get_migrated_from(group_id):
+            logging.info(f"starting syncing migrated chat: {migrated_from_id}")
             self.sync_chat(migrated_from_id, last_id, ids)
 
+        logging.info(f"starting syncing chat: {group_id}")
         self.sync_chat(group_id, last_id, ids)
 
     def _get_migrated_from(self, chat_id) -> Optional[int]:
