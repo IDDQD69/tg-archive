@@ -89,6 +89,10 @@ def main():
     b.add_argument("--symlink", action="store_true", dest="symlink",
                    help="symlink media and other static files instead of copying")
 
+    l = p.add_argument_group("list")
+    l.add_argument("-l", "--list", action="store_true", dest="list",
+                   help="List user chat ids")
+
     args = p.parse_args(args=None if sys.argv[1:] else ['--help'])
 
     if args.version:
@@ -120,6 +124,17 @@ def main():
                 os.chmod(os.path.join(root, d), 0o755)
             for f in files:
                 os.chmod(os.path.join(root, f), 0o644)
+
+    elif args.list:
+        from .sync import Sync
+
+        cfg = get_config(args.config)
+
+        try:
+            s = Sync(cfg, args.session, DB(args.data))
+            s.list()
+        except:
+            raise
 
     # Sync from Telegram.
     elif args.sync:

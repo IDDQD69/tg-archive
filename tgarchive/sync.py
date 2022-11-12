@@ -6,6 +6,7 @@ import os
 import tempfile
 import shutil
 import time
+from typing import Optional
 
 from PIL import Image
 from telethon import TelegramClient, errors, sync
@@ -31,6 +32,21 @@ class Sync:
         if not os.path.exists(self.config["media_dir"]):
             os.mkdir(self.config["media_dir"])
 
+    def list(self):
+        for dialog in self.client.iter_dialogs():
+            entity = dialog.entity
+            if isinstance(entity, telethon.tl.types.Chat):
+                if entity.migrated_to:
+                    continue
+                print('c', entity.id, entity.title)
+            elif isinstance(entity, telethon.tl.types.User):
+                if entity.deleted:
+                    continue
+                print('u', entity.id, entity.first_name, entity.last_name or '',
+                      entity.username or '')
+            elif isinstance(entity, telethon.tl.types.Channel):
+                print('c', entity.id, entity.title)
+
     def sync(self, ids=None, from_id=None):
         """
         Sync syncs messages from Telegram from the last synced message
@@ -50,10 +66,29 @@ class Sync:
 
         group_id = self._get_group_id(self.config["group"])
 
+        if migrated_from_id := self._get_migrated_from(group_id):
+            self.sync_chat(migrated_from_id, last_id, ids)
+
+        self.sync_chat(group_id, last_id, ids)
+
+    def _get_migrated_from(self, chat_id) -> Optional[int]:
+        """
+        Chat dialogs can be converted to channels, they are basically the
+        same thing but with different ids.
+        """
+        for dialog in self.client.iter_dialogs():
+            entity = dialog.entity
+            if (isinstance(entity, telethon.tl.types.Chat)
+                    and entity.migrated_to == chat_id):
+                return entity.id
+        return None
+
+    def sync_chat(self, chat_id: int, last_id: int, ids):
+
         n = 0
         while True:
             has = False
-            for m in self._get_messages(group_id,
+            for m in self._get_messages(chat_id,
                                         offset_id=last_id if last_id else 0,
                                         ids=ids):
                 if not m:
