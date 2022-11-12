@@ -92,6 +92,8 @@ class Sync:
     def sync_chat(self, chat_id: int, last_id: int, ids):
 
         n = 0
+        last_date = None
+
         while True:
             has = False
             for m in self._get_messages(chat_id,
@@ -133,7 +135,7 @@ class Sync:
         if self.config.get("use_takeout", False):
             self.finish_takeout()
         logging.info(
-            "finished. fetched {} messages. last message = {}".format(n, last_date))
+            "finished. fetched {} messages. last message = {}".format(n, last_date or ''))
 
     def new_client(self, session, config):
         if "proxy" in config and config["proxy"].get("enable"):
