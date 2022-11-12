@@ -83,9 +83,9 @@ class Sync:
         """
         for dialog in self.client.iter_dialogs():
             entity = dialog.entity
-            if (isinstance(entity, telethon.tl.types.Chat)
-                    and entity.migrated_to == chat_id):
-                return entity.id
+            if (isinstance(entity, telethon.tl.types.Chat) and entity.migrated_to):
+                if entity.migrated_to.channel_id == chat_id:
+                    return entity.id
         return None
 
     def sync_chat(self, chat_id: int, last_id: int, ids):
