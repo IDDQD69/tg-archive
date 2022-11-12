@@ -1,4 +1,5 @@
 import datetime
+import sys
 from io import BytesIO
 from sys import exit
 import json
@@ -351,7 +352,7 @@ class Sync:
                     basename, fname, thumb = self._download_media(msg)
                     return Media(
                         id=msg.id,
-                        type="photo",
+                        type=self.get_media_type(msg.media),
                         url=fname,
                         title=basename,
                         description=None,
@@ -369,28 +370,45 @@ class Sync:
         # Download the media to the temp dir and copy it back as
         # there does not seem to be a way to get the canonical
         # filename before the download.
-        fpath = self.client.download_media(msg, file=tempfile.gettempdir())
-        basename = os.path.basename(fpath)
 
-        def _date_fmt(date: datetime.datetime):
+        def _date_fmt(date: datetime.datetime) -> str:
             return date.strftime("%Y%m%d-%H%M%S")
 
-        def _date_folders(date: datetime.datetime):
-            return date.strftime("%Y%M")
+        def _date_folders(date: datetime.datetime) -> str:
+            return date.strftime("%Y%m")
 
-        def _get_filename(msg):
-            return f"{self.config['media_dir']}/"\
-                   f"{_date_folders(msg.date)}/"\
-                   f"{_date_fmt(msg.date)}-{msg.id}"
+        def _get_filename(msg, prefix, suffix) -> str:
+            return f"{prefix}{_date_fmt(msg.date)}-{msg.id}{suffix}"
 
-        newname = _get_filename(msg)
-        print("new name", newname)
-        self.client.download_media(msg, file=newname)
+        def _get_download_dir(msg):
+            path = Path(f"{self.config['media_dir']}/"\
+                        f"{_date_folders(msg.date)}/").absolute()
+            path.mkdir(exist_ok=True)
+            return path
+
+        download_dir = _get_download_dir(msg)
+
+        fpath = self.client.download_media(msg, file=tempfile.gettempdir())
+
+        if not isinstance(fpath, str):
+            raise Exception()
+
+        basename = Path(fpath).name
+        suffix = Path(fpath).suffix
+
+        newname = _get_filename(msg, "", suffix)
+
+        shutil.move(fpath, download_dir.joinpath(newname))
 
         # If it's a photo, download the thumbnail.
         tname = None
         if isinstance(msg.media, telethon.tl.types.MessageMediaPhoto):
-            self.client.download_media(msg, file=f"thumb_{newname}", thumb=1)
+            tpath = self.client.download_media(msg,
+                                               file=tempfile.gettempdir(),
+                                               thumb=1)
+            if isinstance(tpath, str):
+                shutil.move(tpath, download_dir.joinpath(
+                    _get_filename(msg, "thumb_", suffix)))
 
         return basename, newname, tname
 
