@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import yaml
+from pathlib import Path
 
 from .db import DB
 
@@ -70,6 +71,8 @@ def main():
                    dest="new", help="initialize a new site")
     n.add_argument("-p", "--path", action="store", type=str, default="example",
                    dest="path", help="path to create the site")
+    n.add_argument("-group", "--group", action="store", type=int, default=None,
+                   dest="group", help="initialize with given id group id")
 
     s = p.add_argument_group("sync")
     s.add_argument("-s", "--sync", action="store_true",
@@ -114,6 +117,12 @@ def main():
             sys.exit(1)
         except:
             raise
+
+        if args.group:
+            config_path = Path(args.path).joinpath("config.yaml")
+            text = config_path.read_text()
+            text = text.replace("<GROUP_ID>", str(args.group))
+            config_path.write_text(text)
 
         logging.info("created directory '{}'".format(args.path))
         

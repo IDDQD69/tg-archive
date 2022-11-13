@@ -60,19 +60,19 @@ class Build:
 
             # Paginate and fetch messages for the month until the end..
             page = 0
-            last_id = 0
+            offset = 0
+            limit = self.config["per_page"]
             total = self.db.get_message_count(
                 month.date.year, month.date.month)
             total_pages = math.ceil(total / self.config["per_page"])
 
             while True:
                 messages = list(self.db.get_messages(month.date.year, month.date.month,
-                                                     last_id, self.config["per_page"]))
+                                                     offset, limit))
+                offset += limit
 
                 if len(messages) == 0:
                     break
-
-                last_id = messages[-1].id
 
                 page += 1
                 fname = self.make_filename(month, page)
@@ -80,7 +80,7 @@ class Build:
                 # Collect the message ID -> page name for all messages in the set
                 # to link to replies in arbitrary positions across months, paginated pages.
                 for m in messages:
-                    self.page_ids[m.id] = fname
+                    self.page_ids[m.message_id] = fname
 
                 if self.config["publish_rss_feed"]:
                     rss_entries.extend(messages)
@@ -139,10 +139,10 @@ class Build:
 
         for m in messages:
             url = "{}/{}#{}".format(self.config["site_url"],
-                                    self.page_ids[m.id], m.id)
+                                    self.page_ids[m.message_id], m.message_id)
             e = f.add_entry()
             e.id(url)
-            e.title("@{} on {} (#{})".format(m.user.username, m.date, m.id))
+            e.title("@{} on {} (#{})".format(m.user.username, m.date, m.message_id))
             e.published(m.date.replace(tzinfo=timezone.utc))
             e.link({"href": url})
 

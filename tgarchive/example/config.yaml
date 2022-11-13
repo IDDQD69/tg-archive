@@ -10,7 +10,7 @@ api_hash: "your_api_hash"
 # Your user account that was used to creat the API ID should 
 # be a member of this group.
 
-group: "your_group_name or your_group_username or your_group_id(a negative number)"
+group: "<GROUP_ID>"
 
 # Avatars and media will be downloaded into media_dir.
 download_media: True

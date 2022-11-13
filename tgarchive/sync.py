@@ -8,6 +8,7 @@ import os
 import tempfile
 import shutil
 import time
+from typing import List
 from typing import Optional
 from telethon import utils
 from pathlib import Path
@@ -16,6 +17,7 @@ from PIL import Image
 from telethon import TelegramClient, errors, sync
 import telethon.tl.types
 
+from .db import Migration
 from .db import User, Message, Media
 
 
@@ -26,6 +28,8 @@ class Sync:
     """
     config = {}
     db = None
+
+    ignore_avatars = []
 
     def __init__(self, config, session_file, db):
         self.config = config
@@ -41,6 +45,7 @@ class Sync:
             entity = dialog.entity
             if isinstance(entity, telethon.tl.types.Chat):
                 if entity.migrated_to:
+                    print('m', entity.id, entity.title, f"({entity.migrated_to.channel_id})")
                     continue
                 print('c', entity.id, entity.title)
             elif isinstance(entity, telethon.tl.types.User):
@@ -57,25 +62,26 @@ class Sync:
         into the local SQLite DB.
         """
 
-        if ids:
-            last_id, last_date = (ids, None)
-            logging.info("fetching message id={}".format(ids))
-        elif from_id:
-            last_id, last_date = (from_id, None)
-            logging.info("fetching from last message id={}".format(last_id))
-        else:
-            last_id, last_date = self.db.get_last_message_id()
-            logging.info("fetching from last message id={} ({})".format(
-                last_id, last_date))
+        last_id = ids or from_id
 
         group_id = self._get_group_id(self.config["group"])
 
-        if migrated_from_id := self._get_migrated_from(group_id):
-            logging.info(f"starting syncing migrated chat: {migrated_from_id}")
-            self.sync_chat(migrated_from_id, last_id, ids)
-
-        logging.info(f"starting syncing chat: {group_id}")
+        if migrated_from_id := self._check_migration(group_id):
+            self.sync_chat(migrated_from_id, last_id, ids, group_id)
         self.sync_chat(group_id, last_id, ids)
+
+    def _check_migration(self, chat_id) -> Optional[int]:
+        """
+        check if chat is migrated, either returns migrated from chat_id or None
+        """
+        migration: Migration = self.db.get_migration(chat_id)
+        if migration:
+            return migration.from_chat_id if migration.done == 0 else None
+
+        migrated_chat_id = self._get_migrated_from(chat_id)
+        self.db.insert_migration(chat_id, migrated_chat_id,
+                                 0 if migrated_chat_id else 1)
+        return migrated_chat_id
 
     def _get_migrated_from(self, chat_id) -> Optional[int]:
         """
@@ -84,21 +90,35 @@ class Sync:
         """
         for dialog in self.client.iter_dialogs():
             entity = dialog.entity
-            if (isinstance(entity, telethon.tl.types.Chat) and entity.migrated_to):
+            if isinstance(entity, telethon.tl.types.Chat) and entity.migrated_to:
                 if entity.migrated_to.channel_id == chat_id:
                     return entity.id
         return None
 
-    def sync_chat(self, chat_id: int, last_id: int, ids):
+    def sync_chat(self, chat_id: int, last_id: int, ids, migrated_chat_id: Optional[int] = None):
+
+        logging.info(f"starting syncing chat: {chat_id}, "
+                     f"last_id: {last_id}, "
+                     f"ids: {ids}, "
+                     f"migrated_chat_id: {migrated_chat_id}")
 
         n = 0
         last_date = None
 
+        if not last_id:
+            last_id, last_date = self.db.get_last_message_id(chat_id)
+            logging.info("fetching from last message id={} ({})".format(
+                last_id, last_date))
+
         while True:
             has = False
-            for m in self._get_messages(chat_id,
-                                        offset_id=last_id if last_id else 0,
-                                        ids=ids):
+
+            messages = self._get_messages(
+                chat_id,
+                offset_id=last_id if last_id else 0,
+                ids=ids)
+
+            for m in messages:
                 if not m:
                     continue
 
@@ -124,11 +144,13 @@ class Sync:
 
             self.db.commit()
             if has:
-                last_id = m.id
+                last_id = m.message_id
                 logging.info("fetched {} messages. sleeping for {} seconds".format(
                     n, self.config["fetch_wait"]))
                 time.sleep(self.config["fetch_wait"])
             else:
+                if migrated_chat_id:
+                    self.db.insert_migration(migrated_chat_id, chat_id, 1)
                 break
 
         self.db.commit()
@@ -186,8 +208,12 @@ class Sync:
     def finish_takeout(self):
         self.client.__exit__(None, None, None)
 
-    def _get_messages(self, group, offset_id, ids=None) -> Message:
+    def _get_messages(self, group, offset_id, ids=None) -> Optional[List[Message]]:
         messages = self._fetch_messages(group, offset_id, ids)
+
+        if len(messages) == 0:
+            return None
+
         # https://docs.telethon.dev/en/latest/quick-references/objects-reference.html#message
         for m in messages:
             if not m or not m.sender:
@@ -220,7 +246,8 @@ class Sync:
 
             yield Message(
                 type=typ,
-                id=m.id,
+                message_id=m.id,
+                chat_id=group,
                 date=m.date,
                 edit_date=m.edit_date,
                 content=sticker if sticker else m.raw_text,
@@ -330,7 +357,7 @@ class Sync:
         if isinstance(msg.media, telethon.tl.types.MessageMediaWebPage) and \
                 not isinstance(msg.media.webpage, telethon.tl.types.WebPageEmpty):
             return Media(
-                id=msg.id,
+                id=msg.id + utils.get_peer_id(msg.peer_id),
                 type="webpage",
                 url=msg.media.webpage.url,
                 title=msg.media.webpage.title,
@@ -353,7 +380,7 @@ class Sync:
                 try:
                     basename, fname, thumb = self._download_media(msg)
                     return Media(
-                        id=msg.id,
+                        id=msg.id + utils.get_peer_id(msg.peer_id),
                         type=self.get_media_type(msg.media),
                         url=fname,
                         title=basename,
@@ -429,6 +456,9 @@ class Sync:
         if os.path.exists(fpath):
             return fname
 
+        if user.id in self.ignore_avatars:
+            return None
+
         logging.info("downloading avatar #{}".format(user.id))
 
         # Download the file into a container, resize it, and then write to disk.
@@ -436,6 +466,7 @@ class Sync:
         profile_photo = self.client.download_profile_photo(user, file=b)
         if profile_photo is None:
             logging.info("user has no avatar #{}".format(user.id))
+            self.ignore_avatars.append(user.id)
             return None
 
         im = Image.open(b)
